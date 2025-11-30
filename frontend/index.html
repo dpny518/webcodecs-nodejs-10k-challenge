@@ -444,13 +444,20 @@
       try {
         const formData = new FormData();
         formData.append('video', uploadedFile);
-        formData.append('start', start);
-        formData.append('end', end);
+        formData.append('codec', 'h264'); // Use H.264 for MP4
+        formData.append('bitrate', '2000000');
+        formData.append('start', start.toString());
+        formData.append('end', end.toString());
 
         const res = await fetch(`${BACKEND}/encode`, {
           method: 'POST',
           body: formData
         });
+
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Encoding failed');
+        }
 
         const blob = await res.blob();
         
