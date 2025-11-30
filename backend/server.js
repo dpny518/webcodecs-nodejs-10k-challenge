@@ -2,6 +2,10 @@ const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const { VideoEncoder, VideoDecoder, VideoFrame, EncodedVideoChunk } = require('./index');
+const { spawn } = require('child_process');
+const ffmpegPath = require('ffmpeg-static');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -9,39 +13,81 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(express.json());
 
-// Encode endpoint - accepts raw frames, returns encoded video
-app.post('/encode', upload.single('frames'), async (req, res) => {
+// Encode endpoint - process video with FFmpeg
+app.post('/encode', upload.single('video'), async (req, res) => {
   try {
-    const { width, height, codec } = req.body;
-    const chunks = [];
+    const { codec = 'vp8', bitrate = '1000000', start, end } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({ error: 'No video file provided' });
+    }
 
-    const encoder = new VideoEncoder({
-      output: (chunk) => chunks.push(chunk.data),
-      error: (e) => console.error(e)
+    // Save uploaded file temporarily
+    const tempInput = path.join('/tmp', `input_${Date.now()}.mp4`);
+    const tempOutput = path.join('/tmp', `output_${Date.now()}.${codec === 'h264' ? 'mp4' : 'webm'}`);
+    
+    fs.writeFileSync(tempInput, req.file.buffer);
+
+    // Map codec names
+    const codecMap = {
+      'vp8': 'libvpx',
+      'vp9': 'libvpx-vp9',
+      'h264': 'libx264',
+      'av01': 'libaom-av1'
+    };
+
+    const ffmpegCodec = codecMap[codec] || 'libvpx';
+    const format = codec === 'h264' ? 'mp4' : 'webm';
+
+    // Build FFmpeg command
+    const args = [
+      '-i', tempInput,
+      '-c:v', ffmpegCodec,
+      '-b:v', bitrate,
+      '-c:a', 'copy'
+    ];
+
+    // Add trim if specified
+    if (start !== undefined && end !== undefined) {
+      args.unshift('-ss', start, '-to', end);
+    }
+
+    args.push('-f', format, tempOutput);
+
+    // Run FFmpeg
+    const ffmpeg = spawn(ffmpegPath, args);
+
+    let stderr = '';
+    ffmpeg.stderr.on('data', (data) => {
+      stderr += data.toString();
     });
 
-    encoder.configure({
-      codec: codec || 'vp8',
-      width: parseInt(width) || 640,
-      height: parseInt(height) || 480,
-      bitrate: 1_000_000
+    ffmpeg.on('close', (code) => {
+      // Clean up input
+      fs.unlinkSync(tempInput);
+
+      if (code !== 0) {
+        console.error('FFmpeg error:', stderr);
+        return res.status(500).json({ error: 'Encoding failed', details: stderr });
+      }
+
+      // Send output file
+      const outputBuffer = fs.readFileSync(tempOutput);
+      fs.unlinkSync(tempOutput);
+
+      res.set('Content-Type', codec === 'h264' ? 'video/mp4' : 'video/webm');
+      res.send(outputBuffer);
     });
 
-    // Encode uploaded frame data
-    const frameData = req.file.buffer;
-    const frame = new VideoFrame(frameData, {
-      timestamp: 0,
-      codedWidth: parseInt(width) || 640,
-      codedHeight: parseInt(height) || 480
+    ffmpeg.on('error', (err) => {
+      console.error('FFmpeg spawn error:', err);
+      if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+      if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+      res.status(500).json({ error: 'Failed to start encoding' });
     });
 
-    encoder.encode(frame, { keyFrame: true });
-    await encoder.close();
-
-    const output = Buffer.concat(chunks);
-    res.set('Content-Type', 'video/webm');
-    res.send(output);
   } catch (e) {
+    console.error('Encode error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -49,33 +95,41 @@ app.post('/encode', upload.single('frames'), async (req, res) => {
 // Decode endpoint - accepts video, returns frame count
 app.post('/decode', upload.single('video'), async (req, res) => {
   try {
-    let frameCount = 0;
+    if (!req.file) {
+      return res.status(400).json({ error: 'No video file provided' });
+    }
 
-    const decoder = new VideoDecoder({
-      output: (frame) => {
-        frameCount++;
-        frame.close();
-      },
-      error: (e) => console.error(e)
+    const tempInput = path.join('/tmp', `decode_${Date.now()}.mp4`);
+    fs.writeFileSync(tempInput, req.file.buffer);
+
+    // Use FFprobe to count frames
+    const ffprobe = spawn(ffmpegPath.replace('ffmpeg', 'ffprobe'), [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-count_packets',
+      '-show_entries', 'stream=nb_read_packets',
+      '-of', 'csv=p=0',
+      tempInput
+    ]);
+
+    let stdout = '';
+    ffprobe.stdout.on('data', (data) => {
+      stdout += data.toString();
     });
 
-    decoder.configure({
-      codec: 'vp8',
-      codedWidth: 640,
-      codedHeight: 480
+    ffprobe.on('close', (code) => {
+      fs.unlinkSync(tempInput);
+      
+      if (code !== 0) {
+        return res.status(500).json({ error: 'Failed to decode video' });
+      }
+
+      const frames = parseInt(stdout.trim()) || 0;
+      res.json({ frames });
     });
 
-    const chunk = new EncodedVideoChunk({
-      type: 'key',
-      timestamp: 0,
-      data: req.file.buffer
-    });
-
-    decoder.decode(chunk);
-    await decoder.close();
-
-    res.json({ frames: frameCount });
   } catch (e) {
+    console.error('Decode error:', e);
     res.status(500).json({ error: e.message });
   }
 });
