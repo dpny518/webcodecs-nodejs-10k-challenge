@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>WebCodecs Node.js Demo</title>
+  <style>
+    body { font-family: system-ui; max-width: 1000px; margin: 50px auto; padding: 20px; }
+    .test { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+    .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    .pending { background: #fff3cd; color: #856404; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin: 5px; }
+    canvas { border: 1px solid #ccc; margin: 10px 0; }
+    .drop-zone {
+      border: 3px dashed #ccc;
+      border-radius: 8px;
+      padding: 40px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .drop-zone.dragover {
+      border-color: #4CAF50;
+      background: #f0f8f0;
+    }
+    .file-info { margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 4px; }
+    pre { background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; }
+    .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+    .tab { padding: 10px 20px; cursor: pointer; border: 1px solid #ddd; border-radius: 4px; }
+    .tab.active { background: #4CAF50; color: white; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+  <h1>🎬 WebCodecs Node.js Demo</h1>
+  <p>Testing WebCodecs API running on Node.js backend (based on <a href="https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API" target="_blank">MDN WebCodecs API</a>)</p>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('basic')">Basic Tests</div>
+    <div class="tab" onclick="switchTab('file')">File Upload</div>
+    <div class="tab" onclick="switchTab('mdn')">MDN Examples</div>
+  </div>
+
+  <!-- Basic Tests Tab -->
+  <div id="basic-tab" class="tab-content active">
+    <div class="test">
+      <h2>Test 1: Backend Health Check</h2>
+      <button onclick="testHealth()">Run Test</button>
+      <div id="health-status"></div>
+    </div>
+
+    <div class="test">
+      <h2>Test 2: Encode Video Frame</h2>
+      <canvas id="canvas" width="320" height="240"></canvas>
+      <br>
+      <button onclick="testEncode()">Encode Frame to VP8</button>
+      <div id="encode-status"></div>
+    </div>
+
+    <div class="test">
+      <h2>Test 3: Decode Video</h2>
+      <button onclick="testDecode()">Decode Video</button>
+      <div id="decode-status"></div>
+    </div>
+
+    <div class="test">
+      <h2>Test 4: Full Pipeline</h2>
+      <button onclick="runFullTest()">Run All Tests</button>
+      <div id="full-status"></div>
+    </div>
+  </div>
+
+  <!-- File Upload Tab -->
+  <div id="file-tab" class="tab-content">
+    <div class="test">
+      <h2>Upload Video File for Processing</h2>
+      <div class="drop-zone" id="dropZone">
+        <p>📁 Drop video file here or click to select</p>
+        <p style="font-size: 14px; color: #666;">Supports: MP4, WebM, MKV</p>
+      </div>
+      <input type="file" id="fileInput" accept="video/*" style="display: none;">
+      
+      <div id="file-info"></div>
+      
+      <div style="margin-top: 20px;">
+        <button onclick="encodeFile()" id="encodeBtn" disabled>Encode to VP8</button>
+        <button onclick="decodeFile()" id="decodeBtn" disabled>Decode & Count Frames</button>
+      </div>
+      
+      <div id="file-status"></div>
+    </div>
+  </div>
+
+  <!-- MDN Examples Tab -->
+  <div id="mdn-tab" class="tab-content">
+    <div class="test">
+      <h2>MDN WebCodecs Example: VideoEncoder</h2>
+      <p>Based on <a href="https://developer.mozilla.org/en-US/docs/Web/API/VideoEncoder" target="_blank">MDN VideoEncoder docs</a></p>
+      
+      <pre><code>// Create encoder (same API as browser!)
+const encoder = new VideoEncoder({
+  output: (chunk, metadata) => {
+    console.log('Encoded chunk:', chunk.type, chunk.byteLength);
+  },
+  error: (e) => console.error(e)
+});
+
+// Configure encoder
+encoder.configure({
+  codec: 'vp8',
+  width: 640,
+  height: 480,
+  bitrate: 1_000_000
+});
+
+// Encode frame
+encoder.encode(videoFrame, { keyFrame: true });</code></pre>
+
+      <button onclick="runMDNExample()">Run MDN Example</button>
+      <div id="mdn-status"></div>
+    </div>
+
+    <div class="test">
+      <h2>MDN Pattern: Encode/Decode Pipeline</h2>
+      <p>Complete encode → decode workflow</p>
+      <button onclick="runPipeline()">Run Pipeline</button>
+      <div id="pipeline-status"></div>
+    </div>
+  </div>
+
+  <script>
+    const BACKEND = 'http://localhost:3001';
+    let uploadedFile = null;
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById(tab + '-tab').classList.add('active');
+    }
+
+    function setStatus(id, msg, type) {
+      document.getElementById(id).innerHTML = 
+        `<div class="status ${type}">${msg}</div>`;
+    }
+
+    // Basic Tests
+    async function testHealth() {
+      setStatus('health-status', 'Testing...', 'pending');
+      try {
+        const res = await fetch(`${BACKEND}/health`);
+        const data = await res.json();
+        setStatus('health-status', 
+          `✅ Backend is ${data.status}, WebCodecs: ${data.webcodecs}`, 'success');
+      } catch (e) {
+        setStatus('health-status', `❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    async function testEncode() {
+      setStatus('encode-status', 'Generating frame...', 'pending');
+      
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createLinearGradient(0, 0, 320, 240);
+      gradient.addColorStop(0, '#ff0000');
+      gradient.addColorStop(1, '#0000ff');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 320, 240);
+      ctx.fillStyle = 'white';
+      ctx.font = '30px Arial';
+      ctx.fillText('WebCodecs Test', 50, 120);
+
+      const imageData = ctx.getImageData(0, 0, 320, 240);
+      const yuv = new Uint8Array(320 * 240 * 3 / 2);
+      yuv.fill(128);
+
+      setStatus('encode-status', 'Encoding via Node.js backend...', 'pending');
+
+      try {
+        const formData = new FormData();
+        formData.append('frames', new Blob([yuv]));
+        formData.append('width', '320');
+        formData.append('height', '240');
+        formData.append('codec', 'vp8');
+
+        const res = await fetch(`${BACKEND}/encode`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const blob = await res.blob();
+        setStatus('encode-status', 
+          `✅ Encoded ${blob.size} bytes to VP8 (WebCodecs API on Node.js)`, 'success');
+        
+        window.encodedVideo = blob;
+      } catch (e) {
+        setStatus('encode-status', `❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    async function testDecode() {
+      if (!window.encodedVideo) {
+        setStatus('decode-status', '⚠️ Run encode test first', 'error');
+        return;
+      }
+
+      setStatus('decode-status', 'Decoding via Node.js backend...', 'pending');
+
+      try {
+        const formData = new FormData();
+        formData.append('video', window.encodedVideo);
+
+        const res = await fetch(`${BACKEND}/decode`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+        setStatus('decode-status', 
+          `✅ Decoded ${data.frames} frames (WebCodecs VideoDecoder)`, 'success');
+      } catch (e) {
+        setStatus('decode-status', `❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    async function runFullTest() {
+      setStatus('full-status', 'Running full test suite...', 'pending');
+      await testHealth();
+      await new Promise(r => setTimeout(r, 500));
+      await testEncode();
+      await new Promise(r => setTimeout(r, 500));
+      await testDecode();
+      setStatus('full-status', '✅ All WebCodecs tests completed!', 'success');
+    }
+
+    // File Upload
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) handleFile(file);
+    });
+
+    function handleFile(file) {
+      uploadedFile = file;
+      document.getElementById('file-info').innerHTML = `
+        <div class="file-info">
+          <strong>File:</strong> ${file.name}<br>
+          <strong>Size:</strong> ${(file.size / 1024 / 1024).toFixed(2)} MB<br>
+          <strong>Type:</strong> ${file.type}
+        </div>
+      `;
+      document.getElementById('encodeBtn').disabled = false;
+      document.getElementById('decodeBtn').disabled = false;
+    }
+
+    async function encodeFile() {
+      if (!uploadedFile) return;
+      setStatus('file-status', 'Reading file...', 'pending');
+
+      try {
+        const arrayBuffer = await uploadedFile.arrayBuffer();
+        setStatus('file-status', 'Encoding via WebCodecs API...', 'pending');
+
+        const formData = new FormData();
+        formData.append('frames', new Blob([arrayBuffer]));
+        formData.append('width', '640');
+        formData.append('height', '480');
+        formData.append('codec', 'vp8');
+
+        const res = await fetch(`${BACKEND}/encode`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const blob = await res.blob();
+        setStatus('file-status', 
+          `✅ Encoded to ${(blob.size / 1024).toFixed(2)} KB VP8`, 'success');
+      } catch (e) {
+        setStatus('file-status', `❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    async function decodeFile() {
+      if (!uploadedFile) return;
+      setStatus('file-status', 'Decoding via WebCodecs API...', 'pending');
+
+      try {
+        const formData = new FormData();
+        formData.append('video', uploadedFile);
+
+        const res = await fetch(`${BACKEND}/decode`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+        setStatus('file-status', 
+          `✅ Decoded ${data.frames} frames using VideoDecoder`, 'success');
+      } catch (e) {
+        setStatus('file-status', `❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    // MDN Examples
+    async function runMDNExample() {
+      setStatus('mdn-status', 'Running MDN VideoEncoder example...', 'pending');
+
+      try {
+        // Generate test frame
+        const yuv = new Uint8Array(640 * 480 * 3 / 2);
+        yuv.fill(128);
+
+        const formData = new FormData();
+        formData.append('frames', new Blob([yuv]));
+        formData.append('width', '640');
+        formData.append('height', '480');
+        formData.append('codec', 'vp8');
+
+        const res = await fetch(`${BACKEND}/encode`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const blob = await res.blob();
+        setStatus('mdn-status', 
+          `✅ MDN Example Success!<br>
+          Encoded chunk: key, ${blob.size} bytes<br>
+          <em>Same API as browser WebCodecs!</em>`, 'success');
+      } catch (e) {
+        setStatus('mdn-status', `❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    async function runPipeline() {
+      setStatus('pipeline-status', 'Running encode → decode pipeline...', 'pending');
+
+      try {
+        // Step 1: Encode
+        const yuv = new Uint8Array(640 * 480 * 3 / 2);
+        yuv.fill(128);
+
+        const formData1 = new FormData();
+        formData1.append('frames', new Blob([yuv]));
+        formData1.append('width', '640');
+        formData1.append('height', '480');
+        formData1.append('codec', 'vp8');
+
+        const encodeRes = await fetch(`${BACKEND}/encode`, {
+          method: 'POST',
+          body: formData1
+        });
+
+        const encoded = await encodeRes.blob();
+
+        // Step 2: Decode
+        const formData2 = new FormData();
+        formData2.append('video', encoded);
+
+        const decodeRes = await fetch(`${BACKEND}/decode`, {
+          method: 'POST',
+          body: formData2
+        });
+
+        const decoded = await decodeRes.json();
+
+        setStatus('pipeline-status', 
+          `✅ Pipeline Complete!<br>
+          1. VideoEncoder: ${encoded.size} bytes<br>
+          2. VideoDecoder: ${decoded.frames} frames<br>
+          <em>Full WebCodecs workflow on Node.js</em>`, 'success');
+      } catch (e) {
+        setStatus('pipeline-status', `❌ Error: ${e.message}`, 'error');
+      }
+    }
+
+    // Auto-run health check
+    window.onload = () => testHealth();
+  </script>
+</body>
+</html>
