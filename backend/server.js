@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
-const { VideoEncoder, VideoDecoder, VideoFrame, EncodedVideoChunk } = require('../index');
+const { VideoEncoder, VideoDecoder, VideoFrame, EncodedVideoChunk } = require('./index');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });

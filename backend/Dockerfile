@@ -6,7 +6,6 @@ COPY package.json .
 RUN npm install
 
 COPY server.js .
-COPY ../index.js ./index.js
 
 EXPOSE 3001
 

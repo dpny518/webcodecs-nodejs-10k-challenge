@@ -6,7 +6,7 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - ./index.js:/app/index.js
+      - ./index.js:/app/index.js:ro
     environment:
       - NODE_ENV=production
 
@@ -16,5 +16,3 @@ services:
       - "3000:3000"
     depends_on:
       - backend
-    environment:
-      - BACKEND_URL=http://backend:3001
