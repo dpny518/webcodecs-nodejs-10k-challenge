@@ -124,8 +124,8 @@ await encoder.close();
 
 ## Participants
 
-**Primary Developer:** [Your Name Here]
-**Email:** [Your Email Here]
+**Primary Developer:** Dhonam Pemba
+**Email:** dpemba@gmail.com
 
 **Prize Distribution:** 100% to primary developer
 
