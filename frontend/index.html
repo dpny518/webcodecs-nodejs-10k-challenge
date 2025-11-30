@@ -359,19 +359,46 @@
     };
 
     async function trimVideo() {
+      if (!uploadedFile) return;
+      
       const start = parseFloat(document.getElementById('startRange').value);
       const end = parseFloat(document.getElementById('endRange').value);
       
       setStatus('trim-status', `Trimming video from ${formatTime(start)} to ${formatTime(end)}...`, 'pending');
       
-      // This would send to backend for actual trimming
-      setTimeout(() => {
-        setStatus('trim-status', `✅ Video trimmed (${formatTime(end - start)} duration)`, 'success');
-      }, 1000);
+      try {
+        const formData = new FormData();
+        formData.append('video', uploadedFile);
+        formData.append('start', start);
+        formData.append('end', end);
+
+        const res = await fetch(`${BACKEND}/encode`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const blob = await res.blob();
+        
+        // Download the trimmed video
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `trimmed_${uploadedFile.name}`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        setStatus('trim-status', `✅ Video trimmed and downloaded!<br>
+          Duration: ${formatTime(end - start)}<br>
+          Size: ${formatBytes(blob.size)}`, 'success');
+      } catch (e) {
+        setStatus('trim-status', `❌ Error: ${e.message}`, 'error');
+      }
     }
 
     // Export Video
     async function exportVideo() {
+      if (!uploadedFile) return;
+
       const codec = document.getElementById('exportCodec').value;
       const bitrate = document.getElementById('exportQuality').value;
       const resolution = document.getElementById('exportResolution').value;
@@ -379,14 +406,37 @@
 
       setStatus('export-status', `Exporting video with ${codec} codec...`, 'pending');
 
-      // This would send to backend for actual export
-      setTimeout(() => {
-        setStatus('export-status', `✅ Video exported successfully!<br>
+      try {
+        const formData = new FormData();
+        formData.append('video', uploadedFile);
+        formData.append('codec', codec);
+        formData.append('bitrate', bitrate);
+        formData.append('resolution', resolution);
+        formData.append('fps', fps);
+
+        const res = await fetch(`${BACKEND}/encode`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const blob = await res.blob();
+        
+        // Download the exported video
+        const ext = codec === 'h264' ? 'mp4' : 'webm';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `exported_${codec}_${uploadedFile.name.split('.')[0]}.${ext}`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        setStatus('export-status', `✅ Video exported and downloaded!<br>
           Codec: ${codec.toUpperCase()}<br>
           Bitrate: ${(bitrate / 1000000).toFixed(1)} Mbps<br>
-          Resolution: ${resolution}<br>
-          Frame Rate: ${fps} fps`, 'success');
-      }, 2000);
+          Size: ${formatBytes(blob.size)}`, 'success');
+      } catch (e) {
+        setStatus('export-status', `❌ Error: ${e.message}`, 'error');
+      }
     }
 
     // Basic Tests
