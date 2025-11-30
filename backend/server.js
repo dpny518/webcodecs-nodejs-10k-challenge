@@ -40,16 +40,25 @@ app.post('/encode', upload.single('video'), async (req, res) => {
     const format = codec === 'h264' ? 'mp4' : 'webm';
 
     // Build FFmpeg command
-    const args = [
-      '-i', tempInput,
-      '-c:v', ffmpegCodec,
-      '-b:v', bitrate,
-      '-c:a', 'copy'
-    ];
+    const args = ['-i', tempInput];
 
     // Add trim if specified
     if (start !== undefined && end !== undefined) {
-      args.unshift('-ss', start, '-to', end);
+      args.push('-ss', start, '-to', end);
+    }
+
+    args.push(
+      '-c:v', ffmpegCodec,
+      '-b:v', bitrate
+    );
+
+    // Handle audio codec based on container format
+    if (format === 'webm') {
+      // WebM requires Opus or Vorbis audio
+      args.push('-c:a', 'libopus');
+    } else {
+      // MP4 can use AAC
+      args.push('-c:a', 'aac');
     }
 
     args.push('-f', format, tempOutput);
